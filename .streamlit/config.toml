@@ -1,0 +1,9 @@
+[theme]
+primaryColor = "#0F766E"
+
+[client]
+# Hide developer options (deploy, rerun settings) from the app menu.
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
