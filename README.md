@@ -44,6 +44,25 @@ comparing.
   discount and stock, cheapest first, and filters out accessories and other models,
   including variants such as "Pro", "Plus" or "ANC" that the product name does not
   include. No credit or AI call is used.
+- **Shops near you**: enter your area and city, or a PIN code, under **Your
+  location** in the sidebar and each analysis also lists up to 6 physical shops near
+  you that sell the product, authorised dealers first. The web is searched for
+  dealers and store locators in your area (business directories such as Justdial
+  and Sulekha, classifieds and online marketplaces are never used), the engine
+  picks the shops on those pages, and every shop is then checked against its page
+  in code: its name and full address must be written there, PIN code included, and
+  the address must be in your area. A shop is shown only if it also passes at least
+  one of these checks, each shown as a badge:
+  - **Authorised dealer**: the page calls it an authorised, official or exclusive
+    dealer, and the exact words are shown.
+  - **Listed on brand site**: it is on the brand's own dealer locator (for example
+    `dealers-auto.mahindra.com` for a Mahindra).
+  - **On Google Maps**: the page links to its Google Maps business listing. A link
+    that only drops a pin on coordinates does not count.
+  - **Website**: the page is on its own site, or links to it.
+
+  Phone numbers are kept only when they appear on the page. No extra credit is
+  used; it is one more call to the engine. Leave the box empty to skip.
 - **Value for money**: the engine rates the product Excellent, Good, Fair or Poor
   from the prices found and what reviewers say, with a one-line reason.
 - **Related products**: three AI-suggested alternatives, chosen to address the
@@ -130,6 +149,7 @@ The app opens at http://localhost:8501.
 | `prices.py` | Price lookup, product matching, formatting and comparison |
 | `stores.py` | Direct search adapters for Amazon, Flipkart, Croma, Reliance Digital, Myntra, Snapdeal |
 | `ai_analyzer.py` | Engine clients, JSON-mode calls with retries, analysis normalisation |
+| `local_shops.py` | Shops near the user: web search, page reading, and the checks each shop must pass |
 | `related_products.py` | AI-suggested alternatives |
 | `report.py` | Markdown and JSON export |
 
@@ -149,13 +169,17 @@ All tunable values live in `config.py`, including:
   in. Defaults to India and INR; change all three together for another country.
 - `PRICE_STORES`: stores searched directly. All are Indian stores; set it to `[]`
   for another country so only web-found listings are used.
+- `LOCAL_SEARCH_RESULTS`, `LOCAL_PAGES`, `MAX_LOCAL_SHOPS`, `LOCAL_SKIP_DOMAINS`:
+  how many shop pages to search for and send to the engine, how many shops to show,
+  and the sites never used as a source of shops.
 - `MAX_REVIEWS_TO_SCRAPE`, `MAX_TOTAL_CHARS`: limits that control cost and speed.
   Long reviews are trimmed to a fair share of `MAX_TOTAL_CHARS`, so every selected
   review is analyzed.
 - `MIN_REVIEWS_FOR_MEDIUM_CONFIDENCE`, `MIN_REVIEWS_FOR_HIGH_CONFIDENCE`,
   `POSITIVE_THRESHOLD`, `NEGATIVE_THRESHOLD`: how confidence is capped and where the
   sentiment score turns Positive or Negative.
-- `ANALYSIS_SYSTEM_PROMPT`, `RELATED_SYSTEM_PROMPT`: the prompts sent to the engines.
+- `ANALYSIS_SYSTEM_PROMPT`, `RELATED_SYSTEM_PROMPT`, `LOCAL_SHOPS_SYSTEM_PROMPT`: the
+  prompts sent to the engines.
 
 ## Limitations
 
@@ -176,3 +200,9 @@ All tunable values live in `config.py`, including:
   and Vijay Sales load results with JavaScript and are not searched.
 - Related products and their ratings and prices are AI suggestions. Verify them on the
   store before buying.
+- Shops near you come only from pages a web search finds, so a genuine shop that has
+  no page with its address in plain text (many store pages build the address, map
+  link and phone number with JavaScript) is not shown. Distance is judged from the
+  address text (locality, city or PIN code), not from a map, and "Your city" can
+  include the outskirts of a district. The checks confirm what the pages say; they
+  cannot confirm stock, price or that a shop is still open, so call before you go.

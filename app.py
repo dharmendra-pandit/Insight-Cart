@@ -7,8 +7,9 @@ Flow:
      credit limit (access.py).
   1. Collect reviews: scrape the web (scraper.py) or parse pasted text.
   2. Analyze them with the chosen engine: pros, cons, sentiment, verdict (ai_analyzer.py).
-  3. Suggest related products (related_products.py).
-  4. Show the result, keep it in session history, offer downloads (report.py).
+  3. With a location set, find verified shops near the user (local_shops.py).
+  4. Suggest related products (related_products.py).
+  5. Show the result, keep it in session history, offer downloads (report.py).
 
 The UI never names the model provider: engines are shown as "Engine 1" and
 "Engine 2" (config.ENGINES).
@@ -29,10 +30,12 @@ import access
 import scraper
 import prices
 import ai_analyzer
+import local_shops
 import related_products
 import report
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s [%(name)s] %(message)s")
+log = logging.getLogger(__name__)
 
 SOURCE_WEB = "web"
 SOURCE_PASTE = "paste"
@@ -132,11 +135,12 @@ def can_start_analysis():
 
 # ── Analysis pipeline ─────────────────────────────────────────
 def run_analysis(product_name, source, manual_text, max_reviews, include_related, engine,
-                 related_to=None, offer_paste=True):
+                 location="", related_to=None, offer_paste=True):
     """
     Collect reviews, analyze them with `engine` and store the result in history.
     A credit is taken when the work starts, so two tabs cannot both use the
     last one, and given back if the analysis fails.
+    `location` (the user's area, may be empty) is where to look for shops.
     `related_to` is the history index of the product this one was suggested for.
     Returns the new history index, or None on failure.
     """
@@ -174,6 +178,7 @@ def run_analysis(product_name, source, manual_text, max_reviews, include_related
 
     # Store prices are looked up in the background while reviews are collected.
     price_future = prices.find_prices_async(product_name)
+    shops_future = None
 
     failure = None
     try:
@@ -188,6 +193,12 @@ def run_analysis(product_name, source, manual_text, max_reviews, include_related
                         f"Collected {plural(len(scraped['reviews']), 'snippet')} "
                         f"from {plural(len(scraped['sources']), 'page')}"
                     )
+
+            # Shop pages near the user are looked up in the background while the
+            # engine reads the reviews; starting after the review search keeps
+            # the searches the analysis needs first in line.
+            if location and not failure:
+                shops_future = local_shops.collect_pages_async(product_name, location)
 
             if not failure:
                 st.write("Comparing store prices")
@@ -224,6 +235,18 @@ def run_analysis(product_name, source, manual_text, max_reviews, include_related
                     )
 
             if not failure:
+                shops = None
+                if shops_future:
+                    st.write(f"Finding shops near {md(location)}")
+                    try:
+                        pages = shops_future.result(timeout=90)
+                    except Exception as e:  # shops are a bonus; never fail the analysis
+                        log.warning("shop search failed: %s", e)
+                        pages = None
+                    shops = local_shops.find_shops(analysis["product_name"], location, pages, engine)
+                    found = len(shops["shops"])
+                    st.write(f"Found {plural(found, 'verified shop')}" if found else "No verified shops found nearby")
+
                 related = None
                 if include_related:
                     st.write("Finding alternatives")
@@ -255,6 +278,7 @@ def run_analysis(product_name, source, manual_text, max_reviews, include_related
             "scraped": scraped,
             "prices": price_data,
             "analysis": analysis,
+            "local_shops": shops,
             "related": related,
             "related_to": related_to,
         }
@@ -289,6 +313,7 @@ def render_result(result, compact=False):
     render_verdict(a)
     render_pros_cons(a)
     render_prices(result)
+    render_local_shops(result)
 
     clicked = None
     related = result.get("related")
@@ -556,6 +581,77 @@ def render_prices(result):
     )
 
 
+def render_local_shops(result):
+    """Shops near the user's location that passed the checks in local_shops.py, best first."""
+    local = result.get("local_shops")
+    if not local:
+        return  # no location was set for this analysis
+    shops = local["shops"]
+
+    st.subheader(f"Shops near {md(local['location'])}", anchor=False)
+    if not shops:
+        with st.container(border=True):
+            info, action = st.columns([3, 1], vertical_alignment="center")
+            with info:
+                st.markdown(md(local["error"] or "No verified shops were found."))
+                st.caption(
+                    "Only shops with a full address that are called an authorised dealer, listed "
+                    "on the brand's own site, or have a Google Maps listing or their own website "
+                    "are shown. Business directories and classifieds are not used."
+                )
+            with action:
+                st.link_button(
+                    "Search Google Maps",
+                    local["maps_search_url"],
+                    icon=":material/map:",
+                    width="stretch",
+                )
+        return
+
+    st.caption(
+        f"{plural(len(shops), 'shop')} found on {plural(local['pages'], 'page')}, authorised dealers "
+        "first. Each has a full address in your area that was checked on the page, and at least "
+        "one of: authorised-dealer wording, a listing on the brand's own site, a Google Maps "
+        "listing, or its own website."
+    )
+    for start in range(0, len(shops), 2):
+        for col, shop in zip(st.columns(2), shops[start:start + 2]):
+            with col.container(border=True, height="stretch"):
+                st.markdown(f"**{md(shop['name'])}**")
+                badges = [
+                    f":{'green' if c in ('Authorised dealer', 'Listed on brand site') else 'blue'}-badge[{c}]"
+                    for c in local_shops.checks(shop)
+                ]
+                badges.append(":gray-badge[Your area]" if shop["area"] == 2 else ":gray-badge[Your city]")
+                st.markdown(" ".join(badges))
+                st.markdown(md(shop["address"]))
+                details = []
+                if shop["phone"]:
+                    details.append(f"Phone: {md(shop['phone'])}")
+                if shop["authorised_quote"]:
+                    details.append(f"The page says: \"{md(shop['authorised_quote'])}\"")
+                details.append(f"Found on [{md(site_name(shop['source']))}](<{shop['source']}>)")
+                st.caption("  \n".join(details))
+                st.link_button(
+                    "Open in Google Maps" if shop["maps_url"] else "Search on Google Maps",
+                    shop["maps_url"] or local_shops.maps_search_url(f"{shop['name']} {shop['address']}"),
+                    icon=":material/map:",
+                    width="stretch",
+                )
+                if shop["website"]:
+                    st.link_button(
+                        "Website",
+                        shop["website"],
+                        type="tertiary",
+                        icon=":material/language:",
+                        width="stretch",
+                    )
+    st.caption(
+        "Shop details are read from public web pages and may be out of date. Call the shop "
+        "to check stock and price before you go."
+    )
+
+
 def _related_rating_caption(p):
     """The real rating when the product has already been analyzed, otherwise the estimate."""
     index = find_result(p["name"])
@@ -695,7 +791,7 @@ def _render_review_list(indexes, reviews, labels, sources):
 
 
 @st.dialog("Product reviews", width="large", on_dismiss="rerun")
-def related_reviews_dialog(product_name, parent_index, max_reviews, include_related, engine):
+def related_reviews_dialog(product_name, parent_index, max_reviews, include_related, engine, location):
     """
     Analyze a related product without leaving the current page.
     Closing the dialog reruns the app so the credit counter and history update.
@@ -703,7 +799,7 @@ def related_reviews_dialog(product_name, parent_index, max_reviews, include_rela
     index = find_result(product_name)
     if index is None:
         index = run_analysis(
-            product_name, SOURCE_WEB, "", max_reviews, include_related, engine,
+            product_name, SOURCE_WEB, "", max_reviews, include_related, engine, location,
             related_to=parent_index, offer_paste=False,
         )
         if index is None:
@@ -724,7 +820,8 @@ def render_empty_state():
          "Separates genuine opinions from page clutter, counts positive and negative ones, "
          "and lists the pros and complaints mentioned most."),
         (":material/storefront:", "Compare",
-         "Checks prices at major stores and suggests alternatives you can analyze in one click."),
+         "Checks prices at major stores, finds verified shops near you when you add your "
+         "location, and suggests alternatives you can analyze in one click."),
     ]
     for col, (icon, title, text) in zip(st.columns(3), steps):
         with col.container(border=True, height="stretch"):
@@ -837,6 +934,17 @@ with st.sidebar:
         horizontal=True,
         help="The AI engine that reads the reviews. Both use the same credits.",
     )
+    location = st.text_input(
+        "Your location",
+        key=config.LOCATION_KEY,
+        placeholder="Area and city, or PIN code",
+        max_chars=80,
+        help=(
+            "Finds verified shops near you that sell the product, such as authorised dealers. "
+            "For example: Koramangala, Bengaluru or 560034. Leave empty to skip. It is used "
+            "in the web search and sent to the engine. Does not use an extra credit."
+        ),
+    ).strip()
     max_reviews = st.slider(
         "Reviews to analyze",
         min_value=10,
@@ -952,6 +1060,7 @@ if submitted:
         max_reviews,
         include_related,
         engine,
+        location,
     )
     if new_index is not None:
         select_result(new_index)
@@ -969,6 +1078,7 @@ if result:
             max_reviews,
             include_related,
             engine,
+            location,
         )
 elif not submitted:
     render_empty_state()

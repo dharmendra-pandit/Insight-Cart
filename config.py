@@ -80,6 +80,27 @@ MAX_PRICE_OFFERS = 12                      # listings shown in the table
 PRICE_STORES = ["amazon", "flipkart", "croma", "reliance_digital", "myntra", "snapdeal"]
 STORE_MATCHES_CONSIDERED = 3               # cheapest of a store's first N matching results
 
+# ── Shops near the user ───────────────────────────────────────
+# With a location set in the sidebar, the web is searched for shops selling the
+# product there (see local_shops.py). A shop is shown only if its name and full
+# address are on the page it was found on, the address is in the user's area,
+# and the page calls it an authorised dealer, the brand's own site lists it,
+# or it has a Google Maps listing link or its own website.
+LOCAL_SEARCH_RESULTS = 8                   # pages per search query (two queries)
+LOCAL_PAGES = 10                           # pages sent to the engine
+LOCAL_LISTINGS_PER_PAGE = 15               # store-locator entries sent per page
+LOCAL_CHARS_PER_PAGE = 2500                # page text sent per page
+MAX_LOCAL_SHOPS = 6                        # shops shown
+# Sites never used as a source: directories and classifieds where anyone can
+# list a shop, online-only marketplaces, and forums.
+LOCAL_SKIP_DOMAINS = {
+    "justdial.com", "sulekha.com", "indiamart.com", "tradeindia.com", "exportersindia.com",
+    "yellowpages.in", "asklaila.com", "grotal.com", "magicpin.in", "nearbuy.com",
+    "zaubacorp.com", "olx.in", "quikr.com",
+    "amazon.in", "flipkart.com", "snapdeal.com", "myntra.com", "meesho.com",
+    "reddit.com", "quora.com", "wikipedia.org",
+}
+
 # ── Access & credits ──────────────────────────────────────────
 # Users sign in with Google ([auth] in .streamlit/secrets.toml). Only emails
 # listed in [access] allowed_emails get in (see access.py and README.md).
@@ -91,6 +112,7 @@ LIMIT_TIMEZONE_NAME = "IST"                # shown in the UI
 ACCESS_DB = Path(__file__).with_name("access.db")  # credits used per user per day
 
 ENGINE_KEY = "engine"                      # session_state key (the engine picker)
+LOCATION_KEY = "location"                  # session_state key (the location box)
 RESULTS_KEY = "analysis_history"           # session_state key
 CURRENT_KEY = "current_result_index"       # session_state key
 
@@ -192,6 +214,44 @@ EXAMPLE JSON OUTPUT:
     }}
   ]
 }}"""
+
+LOCAL_SHOPS_SYSTEM_PROMPT = """You find physical shops where a buyer can buy a product near
+their location. You will receive numbered web pages ([P1], [P2], ...), each with its
+site, title, any store listings from the page's structured data, and page text.
+
+Return only shops that:
+- are named on one of the pages, with a street address written on that page,
+- are in or near the buyer's location,
+- sell this product, or this brand or kind of product: a store, showroom or dealer.
+  Leave out service centres, repair shops, online-only sellers, head offices and
+  shops selling used goods.
+A store-locator page that lists several branches gives one shop per branch.
+Do not add shops, addresses or phone numbers from your own knowledge.
+
+Field rules:
+- name: the shop name as written on the page.
+- address: copied exactly from the page, including the PIN code if the page gives one.
+- phone: as written on the page, or null.
+- page: the number of the page the shop is on.
+- authorised: true only if the page itself says this shop is an authorised,
+  authorized, official or exclusive store, dealer or reseller of the brand.
+- authorised_quote: the exact words from the page that say so, or null.
+List each shop once. Return ONLY valid JSON matching the example below.
+No markdown, no emoji, no extra text.
+
+EXAMPLE JSON OUTPUT:
+{
+  "shops": [
+    {
+      "name": "Example Mobiles",
+      "address": "12, MG Road, Shivajinagar, Bengaluru, Karnataka 560001",
+      "phone": "080 1234 5678",
+      "page": 2,
+      "authorised": true,
+      "authorised_quote": "Authorised Samsung dealer"
+    }
+  ]
+}"""
 
 
 # ── Helpers: session state ────────────────────────────────────

@@ -8,6 +8,7 @@ import re
 import json
 
 import config
+import local_shops
 from prices import format_price
 
 
@@ -79,6 +80,19 @@ def to_markdown(result: dict) -> str:
     else:
         lines.append("- No store prices could be read for this product.")
     lines.append("")
+
+    local = result.get("local_shops")
+    if local:
+        lines += [f"## Shops near {local['location']}", ""]
+        for s in local["shops"]:
+            phone = f", phone {s['phone']}" if s["phone"] else ""
+            link = s["maps_url"] or s["website"] or s["source"]
+            lines.append(
+                f"- **{s['name']}** ({', '.join(local_shops.checks(s))}): {s['address']}{phone}. {link}"
+            )
+        if not local["shops"]:
+            lines.append(f"- {local['error'] or 'No verified shops were found.'}")
+        lines.append("")
 
     lines += ["## Pros", ""] + _points(a["pros"], a.get("pro_mentions")) + [""]
     lines += ["## Cons", ""] + _points(a["cons"], a.get("con_mentions")) + [""]
